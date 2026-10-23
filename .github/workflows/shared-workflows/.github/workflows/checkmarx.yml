@@ -1,0 +1,74 @@
+name: Checkmarx One Scan (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        type: string
+        default: ""
+      branch:
+        type: string
+        default: ""
+      global_params:
+        type: string
+        default: ""
+      scan_params:
+        type: string
+        default: ""
+      utils_params:
+        type: string
+        default: ""
+      results_params:
+        type: string
+        default: ""
+      repo_name:
+        type: string
+        default: ""
+      namespace:
+        type: string
+        default: ""
+      pr_number:
+        type: string
+        default: ""
+      source_dir:
+        type: string
+        default: "."
+      runs_on:
+        type: string
+        default: "ubuntu-latest"
+    secrets:
+      CX_CLIENT_ID:
+        required: true
+      CX_CLIENT_SECRET:
+        required: true
+
+jobs:
+  checkmarx:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+      pull-requests: write      # needed for PR decoration
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkmarx AST GitHub Action
+        uses: Checkmarx/ast-github-action@2.3.36
+        with:
+          base_uri:          ${{ vars.CX_BASE_URI }}
+          cx_tenant:         ${{ vars.CX_TENANT }}
+          cx_client_id:      ${{ secrets.CX_CLIENT_ID }}
+          cx_client_secret:  ${{ secrets.CX_CLIENT_SECRET }}
+
+          project_name:      ${{ inputs.project_name || github.repository }}
+          branch:            ${{ inputs.branch || github.head_ref || github.ref }}
+          github_token:      ${{ github.token }}
+
+          global_params:     ${{ inputs.global_params  || vars.CX_GLOBAL_PARAMS }}
+          scan_params:       ${{ inputs.scan_params    || vars.CX_SCAN_PARAMS }}
+          utils_params:      ${{ inputs.utils_params   || vars.CX_UTILS_PARAMS }}
+          results_params:    ${{ inputs.results_params || vars.CX_RESULTS_PARAMS }}
+
+          repo_name:         ${{ inputs.repo_name || github.event.repository.name }}
+          namespace:         ${{ inputs.namespace || github.repository_owner }}
+          pr_number:         ${{ inputs.pr_number || github.event.number }}
+          source_dir:        ${{ inputs.source_dir }}
