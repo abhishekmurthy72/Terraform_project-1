@@ -6,7 +6,7 @@ on:
       project_name:        { type: string, default: "" }
       branch:              { type: string, default: "" }
       global_params:       { type: string, default: "" }
-      scan_params:         { type: string, default: "" }
+      scan_params:         { type: string, default: "--debug" }
       utils_params:        { type: string, default: "" }
       results_params:      { type: string, default: "" }
       repo_name:           { type: string, default: "" }
@@ -15,7 +15,7 @@ on:
       source_dir:          { type: string, default: "." }
       runs_on:             { type: string, default: "ubuntu-latest" }
       sca_resolver:        { type: string, default: "" }   # path to binary; empty = use var or default
-      sca_resolver_params: { type: string, default: "" }
+      sca_resolver_params: { type: string, default: "--log-level debug" }
       sca_resolver_url:    { type: string, default: "" }   # override download URL if needed
     secrets:
       CX_CLIENT_ID:     { required: true }
