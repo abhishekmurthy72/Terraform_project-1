@@ -1,5 +1,7 @@
 name: Checkmarx One Scan (reusable)
 
+
+
 on:
   workflow_call:
     inputs:
@@ -48,6 +50,8 @@ on:
       CX_CLIENT_SECRET:
         required: true
 
+
+
 jobs:
   checkmarx:
     runs-on: ${{ inputs.runs_on }}
@@ -57,6 +61,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+
+
       - name: Checkmarx AST GitHub Action
         uses: Checkmarx/ast-github-action@2.3.36
         with:
@@ -65,9 +71,13 @@ jobs:
           cx_client_id:      ${{ secrets.CX_CLIENT_ID }}
           cx_client_secret:  ${{ secrets.CX_CLIENT_SECRET }}
 
+
+
           project_name:      ${{ inputs.project_name || github.repository }}
           branch:            ${{ inputs.branch || github.head_ref || github.ref }}
           github_token:      ${{ github.token }}
+
+
 
           global_params:     ${{ inputs.global_params     || vars.CX_GLOBAL_PARAMS }}
           scan_params:       ${{ inputs.scan_params       || vars.CX_SCAN_PARAMS }}
@@ -75,9 +85,13 @@ jobs:
           results_params:    ${{ inputs.results_params    || vars.CX_RESULTS_PARAMS }}
           additional_params: ${{ inputs.additional_params || vars.CX_ADDITIONAL_PARAMS }}
 
+
+
           # PR decoration: an empty pr_number makes the action skip commenting
           repo_name:         ${{ inputs.repo_name || github.event.repository.name }}
           namespace:         ${{ inputs.namespace || github.repository_owner }}
           pr_number:         ${{ inputs.pr_decoration && (inputs.pr_number || github.event.number) || '' }}
+
+
 
           source_dir:        ${{ inputs.source_dir }}
