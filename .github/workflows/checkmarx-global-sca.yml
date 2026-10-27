@@ -37,11 +37,12 @@ jobs:
 
       - name: Download SCA Resolver
         run: |
-          mkdir -p "$(dirname "$SCA_RESOLVER")"
+          mkdir -p "$(dirname "$SCA_RESOLVER")" resolver_tmp
           curl -sSL --fail -o resolver.tar.gz "$SCA_RESOLVER_URL"
-          tar -xzf resolver.tar.gz
-          mv ScaResolver "$SCA_RESOLVER"
+          tar -xzf resolver.tar.gz -C resolver_tmp
+          mv resolver_tmp/ScaResolver "$SCA_RESOLVER"
           chmod +x "$SCA_RESOLVER"
+          rm -rf resolver_tmp resolver.tar.gz
           "$SCA_RESOLVER" --version || true
 
       - name: Assemble scan params
