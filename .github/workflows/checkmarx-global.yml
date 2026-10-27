@@ -33,6 +33,9 @@ on:
       source_dir:
         type: string
         default: "."
+      additional_params:
+        type: string
+        default: "."        
       runs_on:
         type: string
         default: "ubuntu-latest"
@@ -67,7 +70,9 @@ jobs:
           scan_params:       ${{ inputs.scan_params    || vars.CX_SCAN_PARAMS }}
           utils_params:      ${{ inputs.utils_params   || vars.CX_UTILS_PARAMS }}
           results_params:    ${{ inputs.results_params || vars.CX_RESULTS_PARAMS }}
-
+          additional_params: ${{ inputs.additional_params || vars.CX_ADDITIONAL_PARAMS }}
+    
+    # Repository name for PR decoration
           repo_name:         ${{ inputs.repo_name || github.event.repository.name }}
           namespace:         ${{ inputs.namespace || github.repository_owner }}
           pr_number:         ${{ inputs.pr_number || github.event.number }}
