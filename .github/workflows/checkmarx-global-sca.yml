@@ -37,14 +37,20 @@ jobs:
 
       - name: Download SCA Resolver (Alpine build)
         run: |
+          set -x
           DEST="$(dirname "$SCA_RESOLVER")"
           mkdir -p "$DEST" resolver_tmp
           curl -sSL --fail -o resolver.tar.gz "$SCA_RESOLVER_URL"
+          tar -tzf resolver.tar.gz | head -20          # show archive contents
           tar -xzf resolver.tar.gz -C resolver_tmp
-          cp -r resolver_tmp/. "$DEST"/
+          BIN="$(find resolver_tmp -type f -name 'ScaResolver' | head -1)"
+          test -n "$BIN" || { echo "ScaResolver binary not found in archive"; exit 1; }
+          cp -r "$(dirname "$BIN")"/. "$DEST"/
           chmod +x "$SCA_RESOLVER"
           rm -rf resolver_tmp resolver.tar.gz
-          ls -la "$DEST" | grep -i -E 'ScaResolver|Configuration'
+          ls -la "$DEST"
+          file "$SCA_RESOLVER" || true
+          "$SCA_RESOLVER" --version || echo "version check failed on runner (expected if musl build)"
 
       - name: Assemble scan params
         id: params
