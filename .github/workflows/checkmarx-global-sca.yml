@@ -30,7 +30,7 @@ jobs:
     env:
       SCA_RESOLVER:        ${{ inputs.sca_resolver        || vars.CX_SCA_RESOLVER        || './ScaResolver' }}
       SCA_RESOLVER_PARAMS: ${{ inputs.sca_resolver_params || vars.CX_SCA_RESOLVER_PARAMS }}
-      SCA_RESOLVER_URL:    ${{ inputs.sca_resolver_url    || vars.CX_SCA_RESOLVER_URL    || 'https://sca-downloads.s3.amazonaws.com/cli/latest/ScaResolver-musl64.tar.gz' }}
+      SCA_RESOLVER_URL: ${{ inputs.sca_resolver_url || vars.CX_SCA_RESOLVER_URL || 'https://sca-downloads.s3.amazonaws.com/cli/latest/ScaResolver-linux64.tar.gz' }}
       BASE_SCAN_PARAMS:    ${{ inputs.scan_params         || vars.CX_SCAN_PARAMS }}
     steps:
       - uses: actions/checkout@v4
