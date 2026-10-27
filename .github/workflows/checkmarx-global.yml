@@ -21,6 +21,9 @@ on:
       results_params:
         type: string
         default: ""
+      additional_params:
+        type: string
+        default: ""
       repo_name:
         type: string
         default: ""
@@ -30,12 +33,12 @@ on:
       pr_number:
         type: string
         default: ""
+      pr_decoration:
+        type: boolean
+        default: true        # set false in a caller to disable PR comments
       source_dir:
         type: string
         default: "."
-      additional_params:
-        type: string
-        default: "."        
       runs_on:
         type: string
         default: "ubuntu-latest"
@@ -66,16 +69,15 @@ jobs:
           branch:            ${{ inputs.branch || github.head_ref || github.ref }}
           github_token:      ${{ github.token }}
 
-          global_params:     ${{ inputs.global_params  || vars.CX_GLOBAL_PARAMS }}
-          scan_params:       ${{ inputs.scan_params    || vars.CX_SCAN_PARAMS }}
-          utils_params:      ${{ inputs.utils_params   || vars.CX_UTILS_PARAMS }}
-          results_params:    ${{ inputs.results_params || vars.CX_RESULTS_PARAMS }}
+          global_params:     ${{ inputs.global_params     || vars.CX_GLOBAL_PARAMS }}
+          scan_params:       ${{ inputs.scan_params       || vars.CX_SCAN_PARAMS }}
+          utils_params:      ${{ inputs.utils_params      || vars.CX_UTILS_PARAMS }}
+          results_params:    ${{ inputs.results_params    || vars.CX_RESULTS_PARAMS }}
           additional_params: ${{ inputs.additional_params || vars.CX_ADDITIONAL_PARAMS }}
-    
-    # Repository name for PR decoration
+
+          # PR decoration: an empty pr_number makes the action skip commenting
           repo_name:         ${{ inputs.repo_name || github.event.repository.name }}
           namespace:         ${{ inputs.namespace || github.repository_owner }}
-          pr_number:         ${{ inputs.pr_number || github.event.number }}
+          pr_number:         ${{ inputs.pr_decoration && (inputs.pr_number || github.event.number) || '' }}
+
           source_dir:        ${{ inputs.source_dir }}
-
-
