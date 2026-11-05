@@ -3,295 +3,199 @@ name: Checkmarx One Scan with SCA Resolver (reusable)
 on:
   workflow_call:
     inputs:
-      project_name:        { type: string, default: "" }
-      branch:              { type: string, default: "" }
-      global_params:       { type: string, default: "" }
-      scan_params:         { type: string, default: "--debug" }
-      utils_params:        { type: string, default: "" }
-      results_params:      { type: string, default: "" }
-      repo_name:           { type: string, default: "" }
-      namespace:           { type: string, default: "" }
-      pr_number:           { type: string, default: "" }
-      source_dir:          { type: string, default: "." }
-      runs_on:             { type: string, default: "ubuntu-latest" }
-      sca_resolver:        { type: string, default: "" }   # path to binary; empty = use var or default
-      sca_resolver_params: { type: string, default: "--log-level debug" }
-      sca_resolver_url:    { type: string, default: "" }   # override download URL if needed
+      project_name:
+        type: string
+        default: ""
+      branch:
+        type: string
+        default: ""
+      global_params:
+        type: string
+        default: ""
+      scan_params:
+        type: string
+        default: "--debug"
+      utils_params:
+        type: string
+        default: ""
+      results_params:
+        type: string
+        default: ""          # kept for compatibility; not used in direct-CLI flow
+      additional_params:
+        type: string
+        default: ""
+      repo_name:
+        type: string
+        default: ""
+      namespace:
+        type: string
+        default: ""
+      pr_number:
+        type: string
+        default: ""
+      pr_decoration:
+        type: boolean
+        default: false       # set true in a caller to enable PR comments
+      incremental_on_pr:
+        type: boolean
+        default: true        # set false in a caller to force full SAST scans on PRs
+      source_dir:
+        type: string
+        default: "."
+      runs_on:
+        type: string
+        default: "ubuntu-latest"
+      # --- SCA Resolver ---
+      sca_resolver_enabled:
+        type: boolean
+        default: true        # set false to scan without Resolver
+      sca_resolver:
+        type: string
+        default: ""          # path to an existing ScaResolver binary; empty = download latest
+      sca_resolver_params:
+        type: string
+        default: " --log-level Debug"
+      sca_resolver_url:
+        type: string
+        default: ""          # override download URL
+      # --- CLI ---
+      cx_cli_version:
+        type: string
+        default: "2.3.47"
     secrets:
-      CX_CLIENT_ID:     { required: true }
-      CX_CLIENT_SECRET: { required: true }
+      CX_CLIENT_ID:
+        required: true
+      CX_CLIENT_SECRET:
+        required: true
 
 jobs:
   checkmarx:
     runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: write      # only used when pr_decoration: true
     env:
-      SCA_RESOLVER:        ${{ inputs.sca_resolver        || vars.CX_SCA_RESOLVER        || './ScaResolver' }}
-      SCA_RESOLVER_PARAMS: ${{ inputs.sca_resolver_params || vars.CX_SCA_RESOLVER_PARAMS }}
-      SCA_RESOLVER_URL: ${{ inputs.sca_resolver_url || vars.CX_SCA_RESOLVER_URL || 'https://sca-downloads.s3.amazonaws.com/cli/latest/ScaResolver-musl64.tar.gz' }}
-      BASE_SCAN_PARAMS:    ${{ inputs.scan_params         || vars.CX_SCAN_PARAMS }}
+      # Read by the CLI directly
+      CX_BASE_URI:        ${{ vars.CX_BASE_URI }}
+      CX_TENANT:          ${{ vars.CX_TENANT }}
+      CX_CLIENT_ID:       ${{ secrets.CX_CLIENT_ID }}
+      CX_CLIENT_SECRET:   ${{ secrets.CX_CLIENT_SECRET }}
+      # Resolved settings (input -> repo var -> default)
+      IS_PR:               ${{ github.event_name == 'pull_request' }}
+      GLOBAL_PARAMS:       ${{ inputs.global_params       || vars.CX_GLOBAL_PARAMS }}
+      SCAN_PARAMS:         ${{ inputs.scan_params         || vars.CX_SCAN_PARAMS }}
+      ADDITIONAL_PARAMS:   ${{ inputs.additional_params   || vars.CX_ADDITIONAL_PARAMS }}
+      UTILS_PARAMS:        ${{ inputs.utils_params        || vars.CX_UTILS_PARAMS }}
+      RESOLVER_PATH:       ${{ inputs.sca_resolver        || vars.CX_SCA_RESOLVER }}
+      RESOLVER_PARAMS:     ${{ inputs.sca_resolver_params || vars.CX_SCA_RESOLVER_PARAMS }}
+      RESOLVER_URL:        ${{ inputs.sca_resolver_url    || vars.CX_SCA_RESOLVER_URL || 'https://sca-downloads.s3.amazonaws.com/cli/latest/ScaResolver-linux64.tar.gz' }}
+      CX_CLI_VERSION:      ${{ inputs.cx_cli_version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download SCA Resolver (Alpine build)
+      - name: Install Checkmarx CLI
         run: |
-          set -x
-          DEST="$(dirname "$SCA_RESOLVER")"
-          mkdir -p "$DEST" resolver_tmp
-          curl -sSL --fail -o resolver.tar.gz "$SCA_RESOLVER_URL"
-          tar -tzf resolver.tar.gz | head -20          # show archive contents
-          tar -xzf resolver.tar.gz -C resolver_tmp
-          BIN="$(find resolver_tmp -type f -name 'ScaResolver' | head -1)"
-          test -n "$BIN" || { echo "ScaResolver binary not found in archive"; exit 1; }
-          cp -r "$(dirname "$BIN")"/. "$DEST"/
-          chmod +x "$SCA_RESOLVER"
-          rm -rf resolver_tmp resolver.tar.gz
-          ls -la "$DEST"
-          file "$SCA_RESOLVER" || true
-          "$SCA_RESOLVER" --version || echo "version check failed on runner (expected if musl build)"
+          set -e
+          mkdir -p "$RUNNER_TEMP/cx"
+          curl -sSL --fail -o "$RUNNER_TEMP/cx.tar.gz" \
+            "https://github.com/Checkmarx/ast-cli/releases/download/${CX_CLI_VERSION}/ast-cli_${CX_CLI_VERSION}_linux_x64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/cx.tar.gz" -C "$RUNNER_TEMP/cx"
+          chmod +x "$RUNNER_TEMP/cx/cx"
+          echo "$RUNNER_TEMP/cx" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cx/cx" version
 
-      - name: Assemble scan params
-        id: params
+      - name: Prepare SCA Resolver
+        id: resolver
+        if: inputs.sca_resolver_enabled
         run: |
-          OUT="$BASE_SCAN_PARAMS --sca-resolver $SCA_RESOLVER"
-          if [ -n "$SCA_RESOLVER_PARAMS" ]; then
-            OUT="$OUT --sca-resolver-params \"$SCA_RESOLVER_PARAMS\""
+          set -e
+          # Already in scan params? Leave it to the caller.
+          if echo "$SCAN_PARAMS $ADDITIONAL_PARAMS" | grep -q -- '--sca-resolver'; then
+            echo "scan params already contain --sca-resolver; not adding Resolver flags"
+            echo "flags=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "value=$OUT" >> "$GITHUB_OUTPUT"
-          echo "Final scan_params: $OUT"
 
-      - name: Checkmarx AST GitHub Action
-        uses: Checkmarx/ast-github-action@2.3.36
-        with:
-          base_uri:          ${{ vars.CX_BASE_URI }}
-          cx_tenant:         ${{ vars.CX_TENANT }}
-          cx_client_id:      ${{ secrets.CX_CLIENT_ID }}
-          cx_client_secret:  ${{ secrets.CX_CLIENT_SECRET }}
+          if [ -n "$RESOLVER_PATH" ] && [ -x "$RESOLVER_PATH" ]; then
+            echo "Using existing SCA Resolver at $RESOLVER_PATH"
+            BIN="$RESOLVER_PATH"
+          else
+            if [ -n "$RESOLVER_PATH" ]; then
+              echo "No binary at $RESOLVER_PATH; downloading latest Resolver there"
+              DEST="$(dirname "$RESOLVER_PATH")"
+              BIN="$RESOLVER_PATH"
+            else
+              echo "No Resolver path given; downloading latest Resolver"
+              DEST="$RUNNER_TEMP/ScaResolver"
+              BIN="$DEST/ScaResolver"
+            fi
+            mkdir -p "$DEST" "$RUNNER_TEMP/resolver_tmp"
+            curl -sSL --fail -o "$RUNNER_TEMP/resolver.tar.gz" "$RESOLVER_URL"
+            tar -xzf "$RUNNER_TEMP/resolver.tar.gz" -C "$RUNNER_TEMP/resolver_tmp"
+            SRC="$(find "$RUNNER_TEMP/resolver_tmp" -type f -name ScaResolver | head -1)"
+            test -n "$SRC" || { echo "ScaResolver binary not found in archive"; exit 1; }
+            cp -r "$(dirname "$SRC")"/. "$DEST"/
+            [ "$DEST/ScaResolver" = "$BIN" ] || mv "$DEST/ScaResolver" "$BIN"
+            chmod +x "$BIN"
+            rm -rf "$RUNNER_TEMP/resolver_tmp" "$RUNNER_TEMP/resolver.tar.gz"
+          fi
 
-          project_name:      ${{ inputs.project_name || github.repository }}
-          branch:            ${{ inputs.branch || github.head_ref || github.ref }}
-          github_token:      ${{ github.token }}
+          "$BIN" --version
+          FLAGS="--sca-resolver \"$BIN\""
+          [ -n "$RESOLVER_PARAMS" ] && FLAGS="$FLAGS --sca-resolver-params \"$RESOLVER_PARAMS\""
+          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
+          echo "Resolver flags: $FLAGS"
 
-          global_params:     ${{ inputs.global_params  || vars.CX_GLOBAL_PARAMS }}
-          scan_params:       ${{ steps.params.outputs.value }}
-          utils_params:      ${{ inputs.utils_params   || vars.CX_UTILS_PARAMS }}
-          results_params:    ${{ inputs.results_params || vars.CX_RESULTS_PARAMS }}
+      - name: Decide scan mode
+        id: mode
+        run: |
+          MODE_FLAGS=""
+          BRANCH="${{ inputs.branch || github.head_ref || github.ref_name }}"
+          BASE="${{ github.base_ref }}"
+          if [ "$IS_PR" = "true" ] && [ "${{ inputs.incremental_on_pr }}" = "true" ]; then
+            MODE_FLAGS="--sast-incremental=true --sast-base-branch \"$BASE\""
+            echo "PR $BRANCH -> $BASE : incremental SAST, baseline = last full scan of $BASE"
+          else
+            echo "Push to $BRANCH : full scan"
+          fi
+          echo "branch=$BRANCH"         >> "$GITHUB_OUTPUT"
+          echo "mode_flags=$MODE_FLAGS" >> "$GITHUB_OUTPUT"
 
-          repo_name:         ${{ inputs.repo_name || github.event.repository.name }}
-          namespace:         ${{ inputs.namespace || github.repository_owner }}
-          pr_number:         ${{ inputs.pr_number || github.event.number }}
-          source_dir:        ${{ inputs.source_dir }}
+      - name: Checkmarx One scan
+        id: scan
+        env:
+          PROJECT_NAME:   ${{ inputs.project_name || github.repository }}
+          BRANCH:         ${{ steps.mode.outputs.branch }}
+          MODE_FLAGS:     ${{ steps.mode.outputs.mode_flags }}
+          RESOLVER_FLAGS: ${{ steps.resolver.outputs.flags }}
+          SOURCE_DIR:     ${{ inputs.source_dir }}
+        run: |
+          set +e
+          CMD="cx scan create \
+            --project-name \"$PROJECT_NAME\" \
+            --branch \"$BRANCH\" \
+            -s \"$SOURCE_DIR\" \
+            --agent \"Github Action\" \
+            --scan-info-format json \
+            $GLOBAL_PARAMS $MODE_FLAGS $SCAN_PARAMS $ADDITIONAL_PARAMS $RESOLVER_FLAGS"
+          echo "Running: $CMD"
+          eval "$CMD" | tee scan_output.txt
+          RC=${PIPESTATUS[0]}
 
+          SCAN_ID=$(grep -o '"ID":"[^"]*"' scan_output.txt | head -1 | cut -d'"' -f4)
+          echo "scan_id=$SCAN_ID"  >> "$GITHUB_OUTPUT"
+          echo "exit_code=$RC"     >> "$GITHUB_OUTPUT"
+          echo "Scan ID: $SCAN_ID, exit code: $RC"
+          exit 0
 
+      - name: PR decoration
+        if: inputs.pr_decoration && github.event_name == 'pull_request' && steps.scan.outputs.scan_id != ''
+        run: |
+          eval "cx utils pr github \
+            --scan-id \"${{ steps.scan.outputs.scan_id }}\" \
+            --namespace \"${{ inputs.namespace || github.repository_owner }}\" \
+            --repo-name \"${{ inputs.repo_name || github.event.repository.name }}\" \
+            --pr-number \"${{ inputs.pr_number || github.event.number }}\" \
+            --token \"${{ github.token }}\" \
+            $UTILS_PARAMS"
 
-
-
-
-# name: Checkmarx One Scan (reusable)
-
-# on:
-#   workflow_call:
-#     inputs:
-#       project_name:
-#         type: string
-#         default: ""
-#       branch:
-#         type: string
-#         default: ""
-#       global_params:
-#         type: string
-#         default: ""
-#       scan_params:
-#         type: string
-#         default: "--debug"
-#       utils_params:
-#         type: string
-#         default: ""
-#       results_params:
-#         type: string
-#         default: ""          # kept for compatibility; not used in direct-CLI flow
-#       additional_params:
-#         type: string
-#         default: ""
-#       repo_name:
-#         type: string
-#         default: ""
-#       namespace:
-#         type: string
-#         default: ""
-#       pr_number:
-#         type: string
-#         default: ""
-#       pr_decoration:
-#         type: boolean
-#         default: false       # set true in a caller to enable PR comments
-#       incremental_on_pr:
-#         type: boolean
-#         default: true        # set false in a caller to force full SAST scans on PRs
-#       source_dir:
-#         type: string
-#         default: "."
-#       runs_on:
-#         type: string
-#         default: "ubuntu-latest"
-#       # --- SCA Resolver ---
-#       sca_resolver_enabled:
-#         type: boolean
-#         default: true        # set false to scan without Resolver
-#       sca_resolver:
-#         type: string
-#         default: ""          # path to an existing ScaResolver binary; empty = download latest
-#       sca_resolver_params:
-#         type: string
-#         default: " --log-level Debug"
-#       sca_resolver_url:
-#         type: string
-#         default: ""          # override download URL
-#       # --- CLI ---
-#       cx_cli_version:
-#         type: string
-#         default: "2.3.47"
-#     secrets:
-#       CX_CLIENT_ID:
-#         required: true
-#       CX_CLIENT_SECRET:
-#         required: true
-
-# jobs:
-#   checkmarx:
-#     runs-on: ${{ inputs.runs_on }}
-#     permissions:
-#       contents: read
-#       pull-requests: write      # only used when pr_decoration: true
-#     env:
-#       # Read by the CLI directly
-#       CX_BASE_URI:        ${{ vars.CX_BASE_URI }}
-#       CX_TENANT:          ${{ vars.CX_TENANT }}
-#       CX_CLIENT_ID:       ${{ secrets.CX_CLIENT_ID }}
-#       CX_CLIENT_SECRET:   ${{ secrets.CX_CLIENT_SECRET }}
-#       # Resolved settings (input -> repo var -> default)
-#       IS_PR:               ${{ github.event_name == 'pull_request' }}
-#       GLOBAL_PARAMS:       ${{ inputs.global_params       || vars.CX_GLOBAL_PARAMS }}
-#       SCAN_PARAMS:         ${{ inputs.scan_params         || vars.CX_SCAN_PARAMS }}
-#       ADDITIONAL_PARAMS:   ${{ inputs.additional_params   || vars.CX_ADDITIONAL_PARAMS }}
-#       UTILS_PARAMS:        ${{ inputs.utils_params        || vars.CX_UTILS_PARAMS }}
-#       RESOLVER_PATH:       ${{ inputs.sca_resolver        || vars.CX_SCA_RESOLVER }}
-#       RESOLVER_PARAMS:     ${{ inputs.sca_resolver_params || vars.CX_SCA_RESOLVER_PARAMS }}
-#       RESOLVER_URL:        ${{ inputs.sca_resolver_url    || vars.CX_SCA_RESOLVER_URL || 'https://sca-downloads.s3.amazonaws.com/cli/latest/ScaResolver-linux64.tar.gz' }}
-#       CX_CLI_VERSION:      ${{ inputs.cx_cli_version }}
-#     steps:
-#       - uses: actions/checkout@v4
-
-#       - name: Install Checkmarx CLI
-#         run: |
-#           set -e
-#           mkdir -p "$RUNNER_TEMP/cx"
-#           curl -sSL --fail -o "$RUNNER_TEMP/cx.tar.gz" \
-#             "https://github.com/Checkmarx/ast-cli/releases/download/${CX_CLI_VERSION}/ast-cli_${CX_CLI_VERSION}_linux_x64.tar.gz"
-#           tar -xzf "$RUNNER_TEMP/cx.tar.gz" -C "$RUNNER_TEMP/cx"
-#           chmod +x "$RUNNER_TEMP/cx/cx"
-#           echo "$RUNNER_TEMP/cx" >> "$GITHUB_PATH"
-#           "$RUNNER_TEMP/cx/cx" version
-
-#       - name: Prepare SCA Resolver
-#         id: resolver
-#         if: inputs.sca_resolver_enabled
-#         run: |
-#           set -e
-#           # Already in scan params? Leave it to the caller.
-#           if echo "$SCAN_PARAMS $ADDITIONAL_PARAMS" | grep -q -- '--sca-resolver'; then
-#             echo "scan params already contain --sca-resolver; not adding Resolver flags"
-#             echo "flags=" >> "$GITHUB_OUTPUT"
-#             exit 0
-#           fi
-
-#           if [ -n "$RESOLVER_PATH" ] && [ -x "$RESOLVER_PATH" ]; then
-#             echo "Using existing SCA Resolver at $RESOLVER_PATH"
-#             BIN="$RESOLVER_PATH"
-#           else
-#             if [ -n "$RESOLVER_PATH" ]; then
-#               echo "No binary at $RESOLVER_PATH; downloading latest Resolver there"
-#               DEST="$(dirname "$RESOLVER_PATH")"
-#               BIN="$RESOLVER_PATH"
-#             else
-#               echo "No Resolver path given; downloading latest Resolver"
-#               DEST="$RUNNER_TEMP/ScaResolver"
-#               BIN="$DEST/ScaResolver"
-#             fi
-#             mkdir -p "$DEST" "$RUNNER_TEMP/resolver_tmp"
-#             curl -sSL --fail -o "$RUNNER_TEMP/resolver.tar.gz" "$RESOLVER_URL"
-#             tar -xzf "$RUNNER_TEMP/resolver.tar.gz" -C "$RUNNER_TEMP/resolver_tmp"
-#             SRC="$(find "$RUNNER_TEMP/resolver_tmp" -type f -name ScaResolver | head -1)"
-#             test -n "$SRC" || { echo "ScaResolver binary not found in archive"; exit 1; }
-#             cp -r "$(dirname "$SRC")"/. "$DEST"/
-#             [ "$DEST/ScaResolver" = "$BIN" ] || mv "$DEST/ScaResolver" "$BIN"
-#             chmod +x "$BIN"
-#             rm -rf "$RUNNER_TEMP/resolver_tmp" "$RUNNER_TEMP/resolver.tar.gz"
-#           fi
-
-#           "$BIN" --version
-#           FLAGS="--sca-resolver \"$BIN\""
-#           [ -n "$RESOLVER_PARAMS" ] && FLAGS="$FLAGS --sca-resolver-params \"$RESOLVER_PARAMS\""
-#           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
-#           echo "Resolver flags: $FLAGS"
-
-#       - name: Decide scan mode
-#         id: mode
-#         run: |
-#           MODE_FLAGS=""
-#           BRANCH="${{ inputs.branch || github.head_ref || github.ref_name }}"
-#           BASE="${{ github.base_ref }}"
-#           if [ "$IS_PR" = "true" ] && [ "${{ inputs.incremental_on_pr }}" = "true" ]; then
-#             MODE_FLAGS="--sast-incremental=true --sast-base-branch \"$BASE\""
-#             echo "PR $BRANCH -> $BASE : incremental SAST, baseline = last full scan of $BASE"
-#           else
-#             echo "Push to $BRANCH : full scan"
-#           fi
-#           echo "branch=$BRANCH"         >> "$GITHUB_OUTPUT"
-#           echo "mode_flags=$MODE_FLAGS" >> "$GITHUB_OUTPUT"
-
-#       - name: Checkmarx One scan
-#         id: scan
-#         env:
-#           PROJECT_NAME:   ${{ inputs.project_name || github.repository }}
-#           BRANCH:         ${{ steps.mode.outputs.branch }}
-#           MODE_FLAGS:     ${{ steps.mode.outputs.mode_flags }}
-#           RESOLVER_FLAGS: ${{ steps.resolver.outputs.flags }}
-#           SOURCE_DIR:     ${{ inputs.source_dir }}
-#         run: |
-#           set +e
-#           CMD="cx scan create \
-#             --project-name \"$PROJECT_NAME\" \
-#             --branch \"$BRANCH\" \
-#             -s \"$SOURCE_DIR\" \
-#             --agent \"Github Action\" \
-#             --scan-info-format json \
-#             $GLOBAL_PARAMS $MODE_FLAGS $SCAN_PARAMS $ADDITIONAL_PARAMS $RESOLVER_FLAGS"
-#           echo "Running: $CMD"
-#           eval "$CMD" | tee scan_output.txt
-#           RC=${PIPESTATUS[0]}
-
-#           SCAN_ID=$(grep -o '"ID":"[^"]*"' scan_output.txt | head -1 | cut -d'"' -f4)
-#           echo "scan_id=$SCAN_ID"  >> "$GITHUB_OUTPUT"
-#           echo "exit_code=$RC"     >> "$GITHUB_OUTPUT"
-#           echo "Scan ID: $SCAN_ID, exit code: $RC"
-#           exit 0
-
-#       - name: PR decoration
-#         if: inputs.pr_decoration && github.event_name == 'pull_request' && steps.scan.outputs.scan_id != ''
-#         run: |
-#           eval "cx utils pr github \
-#             --scan-id \"${{ steps.scan.outputs.scan_id }}\" \
-#             --namespace \"${{ inputs.namespace || github.repository_owner }}\" \
-#             --repo-name \"${{ inputs.repo_name || github.event.repository.name }}\" \
-#             --pr-number \"${{ inputs.pr_number || github.event.number }}\" \
-#             --token \"${{ github.token }}\" \
-#             $UTILS_PARAMS"
-
-#       - name: Enforce scan result
-#         if: steps.scan.outputs.exit_code != '0'
-#         run: |
-#           echo "Checkmarx scan exited with code ${{ steps.scan.outputs.exit_code }} (threshold breached or scan error)"
-#           exit ${{ steps.scan.outputs.exit_code }}
