@@ -54,7 +54,7 @@ on:
         default: ""          # path to an existing ScaResolver binary; empty = download latest
       sca_resolver_params:
         type: string
-        default: " --log-level Debug"
+        default: ""
       sca_resolver_url:
         type: string
         default: ""          # override download URL
