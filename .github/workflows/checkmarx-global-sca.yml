@@ -199,3 +199,8 @@ jobs:
             --token \"${{ github.token }}\" \
             $UTILS_PARAMS"
 
+      - name: Enforce scan result
+        if: steps.scan.outputs.exit_code != '0'
+        run: |
+          echo "Checkmarx scan exited with code ${{ steps.scan.outputs.exit_code }} (threshold breached or scan error)"
+          exit ${{ steps.scan.outputs.exit_code }}
